@@ -106,6 +106,23 @@ log_sample() {
     fi
 }
 
+# Prints the indexes 0 to count-1 in random order, one per line. Shuffled here
+# in bash because shuf is a GNU tool, and macOS does not come with it.
+shuffled_indexes() {
+    local count=$1 i j swap
+    local order=()
+    for (( i = 0; i < count; i++ )); do
+        order[i]=$i
+    done
+    for (( i = count - 1; i > 0; i-- )); do
+        j=$(( RANDOM % (i + 1) ))
+        swap=${order[i]}
+        order[i]=${order[j]}
+        order[j]=$swap
+    done
+    printf '%s\n' "${order[@]}"
+}
+
 # Deals out every option once, in random order, before any can come up again.
 # Prints an index from 0 to count-1. A dry run changes nothing on disk.
 pick() {
@@ -117,7 +134,7 @@ pick() {
 
     bag="$STATE_DIR/bag_$name"
     if [[ ! -s "$bag" ]]; then
-        seq 0 $(( count - 1 )) | shuf > "$bag"
+        shuffled_indexes "$count" > "$bag"
         # Stop the last pick of the old round opening the new one.
         last=$(cat "$bag.last" 2>/dev/null || true)
         if [[ "$(head -n 1 "$bag")" == "$last" ]] && (( count > 1 )); then
