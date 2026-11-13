@@ -75,7 +75,8 @@ EOF
 }
 mac_mem() { # total_bytes page_bytes free purgeable file_backed
     echo "$1" > "$work/memsize"
-    # Every other line is a bystander that must not end up in the sums.
+    # Every other line is a bystander that must not end up in the sums. The
+    # last one is a look-alike that vm_stat prints on the newest Macs.
     cat > "$work/vm_stat.txt" <<EOF
 Mach Virtual Memory Statistics: (page size of $2 bytes)
 Pages free:                               $3.
@@ -90,6 +91,7 @@ File-backed pages:                       $5.
 Anonymous pages:                         515000.
 Pages stored in compressor:              300000.
 Pages occupied by compressor:            123576.
+Pages tag-storage free:                   43620.
 EOF
 }
 on_mac() { # runs the script where there is no meminfo, only vm_stat and sysctl
@@ -168,9 +170,14 @@ mac_mem 17179869184 16384 4294967196 15000 250000
 check "macOS: a wrapped free count is read as none free" \
     "$(on_mac --status | awk '/^Available:/ {print $2, $3, $4}')" "4.0 GiB (25.3%)"
 
-# A vm_stat without the page counts is refused, not guessed at.
+# A vm_stat without the page counts, or without a page size, is refused rather
+# than guessed at.
 echo "Mach Virtual Memory Statistics: (page size of 4096 bytes)" > "$work/vm_stat.txt"
 on_mac --status 2>/dev/null; check "macOS: vm_stat without page counts refused" "$?" 1
+mac_mem 17179869184 unknown 40000 60000 1000000
+on_mac --status 2>/dev/null; check "macOS: vm_stat without a page size refused" "$?" 1
+# Leave a working Mac behind, so a check added below cannot pass by dying early.
+mac_mem 17179869184 16384 10000 15000 250000
 
 # Variety: 10 bodies should all appear across 10 days, with no back-to-back repeat.
 rm -f "$work/outbox" "$work/state"/bag_*
