@@ -3,7 +3,7 @@
 set -uo pipefail
 
 script="$(cd "$(dirname "$0")" && pwd)/ram-altman.sh"
-work=$(mktemp -d)
+work=$(mktemp -d) || exit 1
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/bin" "$work/state"
 
@@ -37,6 +37,20 @@ printf '#!/usr/bin/env bash\necho Darwin\n' > "$work/macos/uname"
 chmod +x "$work/macos/vm_stat" "$work/macos/sysctl" "$work/macos/uname"
 
 export PATH="$work/bin:$PATH"
+
+# Nothing below may reach a real mailer, so stop here unless the fakes are the
+# ones the script will find and they can be run. With a temp directory mounted
+# noexec, say, every test email would go to the machine's own sendmail instead.
+for fake in sendmail msmtp uname; do
+    [[ "$(command -v "$fake")" == "$work/bin/$fake" ]] && continue
+    echo "the fake $fake in $work/bin is not the one on the PATH; refusing to go on" >&2
+    exit 1
+done
+if ! "$work/bin/uname" -s > /dev/null; then
+    echo "cannot run the fakes in $work/bin; refusing to go on" >&2
+    exit 1
+fi
+
 export RAM_ALTMAN_TO=to@example.com RAM_ALTMAN_FROM=from@example.com
 export RAM_ALTMAN_STATE_DIR="$work/state" RAM_ALTMAN_MEMINFO="$work/meminfo"
 
