@@ -13,7 +13,9 @@
         launchctl bootout gui/$(id -u)/lol.ram-altman
         rm ~/Library/LaunchAgents/lol.ram-altman.plist
 
-    This is XML, so an & in a name has to be written &amp;.
+    launchd reads the copy once, when it is loaded. After a later change,
+    unload it and load it again. This is XML, so an & in a name has to be
+    written &amp;.
 -->
 <plist version="1.0">
 <dict>
@@ -27,6 +29,9 @@
         <string>/path/to/ram-altman.sh</string>
     </array>
 
+    <!-- The script finds an msmtp that Homebrew or MacPorts installed. If yours
+         is somewhere else, add a PATH entry here: its folder, followed by
+         :/usr/bin:/bin:/usr/sbin:/sbin so everything else is still found. -->
     <key>EnvironmentVariables</key>
     <dict>
         <key>RAM_ALTMAN_TO</key>
@@ -42,7 +47,8 @@
     <key>StartInterval</key>
     <integer>300</integer>
 
-    <!-- cron would have mailed you any errors. launchd puts them here instead. -->
+    <!-- cron would have mailed you any errors. launchd puts them here instead.
+         If someone else on this Mac runs this too, give each copy its own name. -->
     <key>StandardErrorPath</key>
     <string>/tmp/ram-altman.err</string>
 </dict>
