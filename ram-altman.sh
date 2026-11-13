@@ -11,6 +11,9 @@
 # Cron (every 5 minutes):
 #   */5 * * * * /path/to/ram-altman.sh
 #
+# launchd, for macOS (every 5 minutes):
+#   see lol.ram-altman.plist
+#
 # How "used" is worked out:
 #   used = MemTotal - MemAvailable
 #
@@ -310,7 +313,7 @@ main() {
             exit 0
             ;;
         -h|--help)
-            sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '3,15p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         "")
