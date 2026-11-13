@@ -27,10 +27,12 @@
 #   used = hw.memsize - (free + file-backed + purgeable pages)
 #
 #   File-backed pages are the page cache, and purgeable pages are memory that
-#   apps have already said can be thrown away. Like free pages, both can be
-#   handed to new programs without compressing or swapping anything. Together
-#   those two are what Activity Monitor calls Cached Files, and what is left
-#   over is what it lists as App Memory, Wired Memory and Compressed.
+#   apps have already said can be thrown away. Neither holds anything that has
+#   to be compressed or swapped before it can be reused, which is the idea
+#   behind MemAvailable, though the result is more generous than Linux's:
+#   nothing is held back in reserve. Together the two are what Activity
+#   Monitor calls Cached Files, and its Memory Used is the used figure here
+#   plus purgeable memory, which it counts on both sides.
 
 set -euo pipefail
 

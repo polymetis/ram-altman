@@ -71,19 +71,21 @@ On kernels older than 3.14, which have no `MemAvailable`, the script estimates i
 
 ### On a Mac
 
-macOS has no `/proc/meminfo` and no `MemAvailable`, so the script puts the same figure together from `vm_stat` and `sysctl hw.memsize`:
+macOS has no `/proc/meminfo` and no `MemAvailable`, so the script puts a figure of the same kind together from `vm_stat` and `sysctl hw.memsize`:
 
 ```text
 used = total - (free + file-backed + purgeable)
 ```
 
-File-backed pages are the page cache. Purgeable pages are memory that apps have already told macOS it may throw away. Like free pages, both can go to a new program without anything being compressed or swapped, which is the test `MemAvailable` applies on Linux.
+File-backed pages are the page cache. Purgeable pages are memory that apps have already told macOS it may throw away. Neither holds anything that would have to be compressed or swapped before the memory could be reused, which is the idea behind `MemAvailable`.
 
-If you check it against Activity Monitor, Cache is its Cached Files, and Used is its App Memory, Wired Memory and Compressed added together. On macOS 15 its own Memory Used reads higher than that, because it counts purgeable memory as used after already counting it as cached.
+It is a more generous figure than Linux's, though. Linux holds a reserve back, and macOS starts compressing app memory well before it has run the file cache down, so even a Mac that is swapping usually clears the 10% threshold. Sam can expect to hear from Mac owners on their bad days too.
+
+If you check it against Activity Monitor, Cache is its Cached Files, and Used is its Memory Used minus purgeable memory, which Activity Monitor counts as used after already counting it as cached. Total is the RAM installed, as it is there. On Apple silicon that includes a slice the firmware keeps for itself before macOS starts, and it shows up as used.
 
 `memory_pressure` will tell you a much bigger share of your memory is free. It counts everything macOS could push into the compressor or out to swap, including the apps you have open. That isn't idle RAM, it's a plan for your RAM, and we'd rather not give anyone ideas.
 
-It needs OS X 10.9 or later, which is when `vm_stat` started counting file-backed pages.
+It's tested on macOS 15 and 26. On paper it goes back to 10.12: `vm_stat` has counted file-backed pages since 10.9, and `date -R`, which stamps the email, arrived in 10.12.
 
 ## Installation
 
