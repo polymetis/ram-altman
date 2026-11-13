@@ -76,8 +76,9 @@ mem 16000000 300000 9000000 200000 8000000 500000 100000
 for _ in $(seq 40); do echo 2000-01-01 > "$work/state/last_sent"; "$script"; done
 awk 'BEGIN{RS="=====END=====\n"} NF{n=split($0,l,"\n"); for(i=1;i<=n;i++) if(l[i]=="Hi Sam,"){b=l[i+2]; print b}}' \
     "$work/outbox" > "$work/bodies"
-check "all opening lines used" "$(head -n 10 "$work/bodies" | sort -u | wc -l)" 10
-check "no back-to-back repeat" "$(uniq -d "$work/bodies" | wc -l)" 0
+# BSD wc pads its count with spaces, so $(( )) turns it back into a bare number.
+check "all opening lines used" "$(( $(head -n 10 "$work/bodies" | sort -u | wc -l) ))" 10
+check "no back-to-back repeat" "$(( $(uniq -d "$work/bodies" | wc -l) ))" 0
 
 # Config errors.
 RAM_ALTMAN_TO='' "$script" 2>/dev/null; check "missing recipient refused" "$?" 1
