@@ -132,12 +132,16 @@ It samples every five minutes and emails at most once a day. If a send fails, it
 
 ### Running it on a Mac
 
-A Mac would rather you used launchd than cron, so there's a job for it in [`lol.ram-altman.plist`](lol.ram-altman.plist):
+A Mac would rather you used launchd than cron, so there's a job for it in [`lol.ram-altman.plist`](lol.ram-altman.plist). Copy it into place:
 
 ```bash
 mkdir -p ~/Library/LaunchAgents
 cp lol.ram-altman.plist ~/Library/LaunchAgents/
-# edit the copy: the full path to ram-altman.sh, and your addresses
+```
+
+Open the copy and put in the full path to `ram-altman.sh` and your addresses. Only then load it:
+
+```bash
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/lol.ram-altman.plist
 ```
 
@@ -148,7 +152,9 @@ launchctl print gui/$(id -u)/lol.ram-altman       # look for "runs" and "last ex
 launchctl kickstart gui/$(id -u)/lol.ram-altman   # run it now
 ```
 
-Anything the script complains about is appended to `/tmp/ram-altman.err`. An empty file, or no file, means no complaints. To call the whole thing off, unload it and delete the copy, or it will be back at your next login:
+Anything the script complains about is appended to `/tmp/ram-altman.err`. An empty file, or no file, means no complaints.
+
+launchd reads the copy once, when you load it. If you change it later, say to swap your own address for someone else's, unload it with the `bootout` line below and load it again. To call the whole thing off, unload it and delete the copy, or it will be back at your next login:
 
 ```bash
 launchctl bootout gui/$(id -u)/lol.ram-altman
