@@ -135,6 +135,12 @@ check "macOS: used = total - available" \
 # Every Mac has a sendmail, set up or not, so an msmtp is preferred there.
 check "macOS: msmtp is tried before sendmail" "$(cat "$work/mailer")" msmtp
 
+# Before macOS 15 the free count could wrap round to four billion pages just as
+# free memory ran out. Believing it would report a full Mac as an empty one.
+mac_mem 17179869184 16384 4294967196 15000 250000
+check "macOS: a wrapped free count is read as none free" \
+    "$(on_mac --status | awk '/^Available:/ {print $2, $3, $4}')" "4.0 GiB (25.3%)"
+
 # A vm_stat without the page counts is refused, not guessed at.
 echo "Mach Virtual Memory Statistics: (page size of 4096 bytes)" > "$work/vm_stat.txt"
 on_mac --status 2>/dev/null; check "macOS: vm_stat without page counts refused" "$?" 1

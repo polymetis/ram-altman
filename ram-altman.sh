@@ -100,6 +100,9 @@ read_vm_stat() {
                 if (!page_kb || !has_file_backed) exit 1
                 total = total_bytes / 1024
                 free_kb = free * page_kb
+                # Before macOS 15 this count could wrap round to four billion
+                # pages just as free memory ran out. That means none is free.
+                if (free_kb > total) free_kb = 0
                 cache_kb = (file_backed + purgeable) * page_kb
                 available = free_kb + cache_kb
                 if (available > total) available = total
