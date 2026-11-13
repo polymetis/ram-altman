@@ -48,8 +48,9 @@ LAST_SENT_FILE="$STATE_DIR/last_sent"
 MAX_LOG_BYTES=$((10 * 1024 * 1024))   # Trim the log once it passes 10 MiB
 LOG_LINES_TO_KEEP=50000
 
-# cron's PATH often leaves out the directories sendmail lives in.
-export PATH="$PATH:/usr/sbin:/sbin"
+# cron and launchd start jobs with a short PATH. It often leaves out the
+# directories sendmail lives in, and on a Mac the ones Homebrew puts msmtp in.
+export PATH="$PATH:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
 
 die() {
     printf 'ram-altman: %s\n' "$*" >&2
@@ -278,7 +279,13 @@ render_message() {
 }
 
 send_email() {
-    if command -v sendmail > /dev/null; then
+    # Every Mac comes with a sendmail, whether or not anyone has set it up to
+    # deliver anything, and it reports success as soon as a message is queued.
+    # An msmtp is something its owner chose to install, and it only reports
+    # success once a server has taken the message, so on macOS it goes first.
+    if [[ "$(uname -s)" == Darwin ]] && command -v msmtp > /dev/null; then
+        render_message | msmtp -t
+    elif command -v sendmail > /dev/null; then
         render_message | sendmail -t -i
     elif command -v msmtp > /dev/null; then
         render_message | msmtp -t

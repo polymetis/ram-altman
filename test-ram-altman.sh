@@ -10,12 +10,20 @@ mkdir -p "$work/bin" "$work/state"
 cat > "$work/bin/sendmail" <<EOF
 #!/usr/bin/env bash
 [[ -e "$work/fail" ]] && exit 75
+basename "\$0" > "$work/mailer"
 cat >> "$work/outbox"
 echo "=====END=====" >> "$work/outbox"
 EOF
 chmod +x "$work/bin/sendmail"
+# The same fake answers to msmtp, so that whichever mailer the script reaches
+# for, it never finds a real one. $work/mailer says which name it was called by.
+cp "$work/bin/sendmail" "$work/bin/msmtp"
 
-# A stand-in Mac. These two are only on the PATH for on_mac, below.
+# The machine under test is a Linux one, wherever the tests are really run...
+printf '#!/usr/bin/env bash\necho Linux\n' > "$work/bin/uname"
+chmod +x "$work/bin/uname"
+
+# ...except in on_mac, below, which puts this stand-in Mac first on the PATH.
 mkdir -p "$work/macos"
 cat > "$work/macos/vm_stat" <<EOF
 #!/usr/bin/env bash
@@ -25,7 +33,8 @@ cat > "$work/macos/sysctl" <<EOF
 #!/usr/bin/env bash
 [[ "\$*" == "-n hw.memsize" ]] && cat "$work/memsize"
 EOF
-chmod +x "$work/macos/vm_stat" "$work/macos/sysctl"
+printf '#!/usr/bin/env bash\necho Darwin\n' > "$work/macos/uname"
+chmod +x "$work/macos/vm_stat" "$work/macos/sysctl" "$work/macos/uname"
 
 export PATH="$work/bin:$PATH"
 export RAM_ALTMAN_TO=to@example.com RAM_ALTMAN_FROM=from@example.com
@@ -97,6 +106,7 @@ touch "$work/fail"
 check "failed send not recorded" "$(cat "$work/state/last_sent")" 2000-01-01
 rm "$work/fail"
 "$script"; check "retry succeeds" "$(sent)" 3
+check "sendmail is tried before msmtp" "$(cat "$work/mailer")" sendmail
 
 # Old kernel with no MemAvailable: free + buffers + cached + slab - shmem.
 # SwapCached in the fixture must not be picked up as Cached.
@@ -122,6 +132,8 @@ echo 2000-01-01 > "$work/state/last_sent"
 on_mac; check "macOS: email sent" "$(sent)" 4
 check "macOS: used = total - available" \
     "$(tail -n 1 "$work/state/usage.csv" | cut -d, -f2-4)" "16777216,12377216,4400000"
+# Every Mac has a sendmail, set up or not, so an msmtp is preferred there.
+check "macOS: msmtp is tried before sendmail" "$(cat "$work/mailer")" msmtp
 
 # A vm_stat without the page counts is refused, not guessed at.
 echo "Mach Virtual Memory Statistics: (page size of 4096 bytes)" > "$work/vm_stat.txt"
