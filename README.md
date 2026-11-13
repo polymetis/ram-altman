@@ -31,7 +31,7 @@ So we wrote a script. If your machine has more than 10% of its RAM available, it
 - Sends at most one email per day, because we're hoarders, not animals
 - Rotates 8 subject lines, 10 messages and 6 sign-offs, so the joke gets old at a carefully managed pace
 - Logs every sample to CSV for when the auditors arrive
-- Ships with 14 tests, more than the DRAM market has had sensible outcomes
+- Ships with 28 tests, more than the DRAM market has had sensible outcomes
 - Is written in bash, as an Electron version would have solved the problem by using all the RAM
 
 ## A sample of today's correspondence
@@ -69,9 +69,27 @@ Strictly speaking, the page cache is doing useful work, so counting it as availa
 
 On kernels older than 3.14, which have no `MemAvailable`, the script estimates it from free memory plus reclaimable cache. If you're on one of those, your RAM may be safe. Nobody's coming for that.
 
+### On a Mac
+
+macOS has no `/proc/meminfo` and no `MemAvailable`, so the script puts a figure of the same kind together from `vm_stat` and `sysctl hw.memsize`:
+
+```text
+used = total - (free + file-backed + purgeable)
+```
+
+File-backed pages are the page cache. Purgeable pages are memory that apps have already told macOS it may throw away. Neither holds anything that would have to be compressed or swapped before the memory could be reused, which is the idea behind `MemAvailable`.
+
+It is a more generous figure than Linux's, though. Linux holds a reserve back, and macOS starts compressing app memory well before it has run the file cache down, so even a Mac that is swapping usually clears the 10% threshold. Sam can expect to hear from Mac owners on their bad days too.
+
+If you check it against Activity Monitor, Cache is its Cached Files, and Used is its Memory Used minus purgeable memory, which Activity Monitor counts as used after already counting it as cached. Total is the RAM installed, as it is there. On Apple silicon that includes a slice the firmware keeps for itself before macOS starts, and it shows up as used.
+
+`memory_pressure` will tell you a much bigger share of your memory is free. It counts everything macOS could push into the compressor or out to swap, including the apps you have open. That isn't idle RAM, it's a plan for your RAM, and we'd rather not give anyone ideas.
+
+It's tested on macOS 15 and 26. On paper it goes back to 10.12: `vm_stat` has counted file-backed pages since 10.9, and `date -R`, which stamps the email, arrived in 10.12.
+
 ## Installation
 
-You'll need Linux, bash, and a working `sendmail`, `msmtp` or `mail` command. Your RAM is assumed.
+You'll need Linux or macOS, bash, and a working `sendmail`, `msmtp` or `mail` command. Your RAM is assumed.
 
 ```bash
 git clone https://github.com/IainKay/ram-altman.git
@@ -112,6 +130,42 @@ It samples every five minutes and emails at most once a day. If a send fails, it
 | `RAM_ALTMAN_THRESHOLD` | Email when available RAM is above this percentage (whole number) | `10` |
 | `RAM_ALTMAN_STATE_DIR` | Where the log and state files live | `~/.local/state/ram-altman` |
 
+### Running it on a Mac
+
+A Mac would rather you used launchd than cron, so there's a job for it in [`lol.ram-altman.plist`](lol.ram-altman.plist). Copy it into place:
+
+```bash
+mkdir -p ~/Library/LaunchAgents
+cp lol.ram-altman.plist ~/Library/LaunchAgents/
+```
+
+Open the copy and put in the full path to `ram-altman.sh` and your addresses. Only then load it:
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/lol.ram-altman.plist
+```
+
+From then on it runs about every five minutes while you're logged in and the Mac is awake, starting five minutes after you load it. On macOS 13 and later you'll be told that a background item called `bash` was added. That's this. To see how it's getting on, or to skip the wait:
+
+```bash
+launchctl print gui/$(id -u)/lol.ram-altman       # look for "runs" and "last exit code"
+launchctl kickstart gui/$(id -u)/lol.ram-altman   # run it now
+```
+
+Anything the script complains about is appended to `/tmp/ram-altman.err`. An empty file, or no file, means no complaints.
+
+launchd reads the copy once, when you load it. If you change it later, say to swap your own address for someone else's, unload it with the `bootout` line below and load it again. To call the whole thing off, unload it and delete the copy, or it will be back at your next login:
+
+```bash
+launchctl bootout gui/$(id -u)/lol.ram-altman
+rm ~/Library/LaunchAgents/lol.ram-altman.plist
+```
+
+Two things are different from Linux:
+
+- **Keep the script out of Desktop, Documents, Downloads, iCloud Drive and external drives.** macOS guards those, and a background job that reaches into them gets "Operation not permitted" instead. The same goes for `RAM_ALTMAN_STATE_DIR` if you move it.
+- **Every Mac has a `sendmail`, and it tells you what you want to hear.** It reports success as soon as a message is queued, then tries to deliver it straight from your Mac, which most networks and mail servers won't accept. The script can't see that, so it counts the day as done. Install `msmtp` instead (Homebrew and MacPorts both have it) and give it a default account in `~/.msmtprc` with a `from` line: on a Mac the script uses it ahead of `sendmail`, and a send that fails gets retried. Whichever you use, point it at your own address first and see whether anything arrives.
+
 ## Audit yourself
 
 Let it run for a while, then find out how your machine compares:
@@ -144,7 +198,7 @@ No.
 The memory accounting is. The correspondence isn't.
 
 **Does it work on macOS?**
-No, it reads `/proc/meminfo`. On the other hand, your RAM is probably soldered down, which makes you the hardest target in the global allocation programme.
+Yes. A Mac has no `/proc/meminfo`, so it reads `vm_stat` instead. Your RAM is probably soldered down, which still makes you the hardest target in the global allocation programme.
 
 **Why is the threshold 10%?**
 Below that, your machine has suffered enough.

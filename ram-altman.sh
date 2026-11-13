@@ -11,6 +11,9 @@
 # Cron (every 5 minutes):
 #   */5 * * * * /path/to/ram-altman.sh
 #
+# launchd, for macOS (every 5 minutes):
+#   see lol.ram-altman.plist
+#
 # How "used" is worked out:
 #   used = MemTotal - MemAvailable
 #
@@ -19,6 +22,17 @@
 #   and slab memory that can be reclaimed, so cached RAM does not count as used.
 #   It leaves out what can't really be reclaimed, such as tmpfs/shared memory,
 #   which makes it more accurate than simply adding "free" and "cached" together.
+#
+# macOS has no /proc/meminfo, so there the same sum is built from vm_stat:
+#   used = hw.memsize - (free + file-backed + purgeable pages)
+#
+#   File-backed pages are the page cache, and purgeable pages are memory that
+#   apps have already said can be thrown away. Neither holds anything that has
+#   to be compressed or swapped before it can be reused, which is the idea
+#   behind MemAvailable, though the result is more generous than Linux's:
+#   nothing is held back in reserve. Together the two are what Activity
+#   Monitor calls Cached Files, and its Memory Used is the used figure here
+#   plus purgeable memory, which it counts on both sides.
 
 set -euo pipefail
 
@@ -39,15 +53,26 @@ LOG_LINES_TO_KEEP=50000
 # cron's PATH often leaves out the directories sendmail lives in.
 export PATH="$PATH:/usr/sbin:/sbin"
 
+# On a Mac those hold sysctl as well. msmtp is somewhere else again, where
+# neither cron nor launchd looks: wherever a package manager put it. The
+# README and lol.ram-altman.plist name the same two.
+#   homebrew: /opt/homebrew/bin on Apple silicon, /usr/local/bin on Intel
+#   macports: /opt/local/bin
+if [[ "$(uname -s)" == Darwin ]]; then
+    PATH="$PATH:/opt/homebrew/bin:/usr/local/bin:/opt/local/bin"
+fi
+
+# Figures are written with a full stop whatever the locale says. The awk on
+# macOS would otherwise follow it, and a decimal comma adds a column to the CSV.
+export LC_ALL=C
+
 die() {
     printf 'ram-altman: %s\n' "$*" >&2
     exit 1
 }
 
-# Sets: total_kb, available_kb, used_kb, free_kb, cache_kb, available_pct
-read_memory() {
-    [[ -r "$MEMINFO" ]] || die "cannot read $MEMINFO (this script needs Linux)"
-
+# Linux. Sets: total_kb, available_kb, free_kb, cache_kb
+read_meminfo() {
     read -r total_kb available_kb free_kb cache_kb < <(
         awk '
             /^MemTotal:/      { total = $2 }
@@ -69,6 +94,49 @@ read_memory() {
     )
 
     (( total_kb > 0 )) || die "could not find MemTotal in $MEMINFO"
+}
+
+# macOS. Sets: total_kb, available_kb, free_kb, cache_kb
+read_vm_stat() {
+    local total_bytes
+    total_bytes=$(sysctl -n hw.memsize 2> /dev/null || true)
+
+    # vm_stat counts pages and prints each count with a trailing full stop,
+    # which awk drops when it reads the field as a number.
+    read -r total_kb available_kb free_kb cache_kb < <(
+        vm_stat | awk -v total_bytes="$total_bytes" '
+            /page size of [0-9]+ bytes/  { page_kb = $(NF - 1) / 1024 }
+            /^Pages free:/               { free = $NF }
+            /^Pages purgeable:/          { purgeable = $NF }
+            /^File-backed pages:/        { file_backed = $NF; has_file_backed = 1 }
+            END {
+                # OS X before 10.9 does not report file-backed pages at all.
+                if (!page_kb || !has_file_backed) exit 1
+                total = total_bytes / 1024
+                free_kb = free * page_kb
+                # Before macOS 15 this count could wrap round to four billion
+                # pages just as free memory ran out. That means none is free.
+                if (free_kb > total) free_kb = 0
+                cache_kb = (file_backed + purgeable) * page_kb
+                available = free_kb + cache_kb
+                if (available > total) available = total
+                printf "%.0f %.0f %.0f %.0f\n", total, available, free_kb, cache_kb
+            }
+        '
+    ) || die "could not find the page counts in vm_stat (needs macOS 10.9 or later)"
+
+    (( total_kb > 0 )) || die "could not read hw.memsize from sysctl"
+}
+
+# Sets: total_kb, available_kb, used_kb, free_kb, cache_kb, available_pct
+read_memory() {
+    if [[ -r "$MEMINFO" ]]; then
+        read_meminfo
+    elif command -v vm_stat > /dev/null; then
+        read_vm_stat
+    else
+        die "cannot read $MEMINFO or run vm_stat (this script needs Linux or macOS)"
+    fi
 
     used_kb=$(( total_kb - available_kb ))
     available_pct=$(awk -v a="$available_kb" -v t="$total_kb" \
@@ -106,6 +174,23 @@ log_sample() {
     fi
 }
 
+# Prints the indexes 0 to count-1 in random order, one per line. Shuffled here
+# in bash because shuf is a GNU tool, and macOS does not come with it.
+shuffled_indexes() {
+    local count=$1 i j swap
+    local order=()
+    for (( i = 0; i < count; i++ )); do
+        order[i]=$i
+    done
+    for (( i = count - 1; i > 0; i-- )); do
+        j=$(( RANDOM % (i + 1) ))
+        swap=${order[i]}
+        order[i]=${order[j]}
+        order[j]=$swap
+    done
+    printf '%s\n' "${order[@]}"
+}
+
 # Deals out every option once, in random order, before any can come up again.
 # Prints an index from 0 to count-1. A dry run changes nothing on disk.
 pick() {
@@ -117,7 +202,7 @@ pick() {
 
     bag="$STATE_DIR/bag_$name"
     if [[ ! -s "$bag" ]]; then
-        seq 0 $(( count - 1 )) | shuf > "$bag"
+        shuffled_indexes "$count" > "$bag"
         # Stop the last pick of the old round opening the new one.
         last=$(cat "$bag.last" 2>/dev/null || true)
         if [[ "$(head -n 1 "$bag")" == "$last" ]] && (( count > 1 )); then
@@ -211,7 +296,13 @@ render_message() {
 }
 
 send_email() {
-    if command -v sendmail > /dev/null; then
+    # Every Mac comes with a sendmail, whether or not anyone has set it up to
+    # deliver anything, and it reports success as soon as a message is queued.
+    # An msmtp is something its owner chose to install, and it only reports
+    # success once a server has taken the message, so on macOS it goes first.
+    if [[ "$(uname -s)" == Darwin ]] && command -v msmtp > /dev/null; then
+        render_message | msmtp -t
+    elif command -v sendmail > /dev/null; then
         render_message | sendmail -t -i
     elif command -v msmtp > /dev/null; then
         render_message | msmtp -t
@@ -246,7 +337,7 @@ main() {
             exit 0
             ;;
         -h|--help)
-            sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '3,15p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         "")

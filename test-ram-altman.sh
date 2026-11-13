@@ -3,19 +3,55 @@
 set -uo pipefail
 
 script="$(cd "$(dirname "$0")" && pwd)/ram-altman.sh"
-work=$(mktemp -d)
+work=$(mktemp -d) || exit 1
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/bin" "$work/state"
 
 cat > "$work/bin/sendmail" <<EOF
 #!/usr/bin/env bash
 [[ -e "$work/fail" ]] && exit 75
+echo "\$(basename "\$0") \$*" > "$work/mailer"
 cat >> "$work/outbox"
 echo "=====END=====" >> "$work/outbox"
 EOF
 chmod +x "$work/bin/sendmail"
+# The same fake answers to msmtp, so that whichever mailer the script reaches
+# for, it never finds a real one. $work/mailer says which name it was called
+# by, and with what.
+cp "$work/bin/sendmail" "$work/bin/msmtp"
+
+# The machine under test is a Linux one, wherever the tests are really run...
+printf '#!/usr/bin/env bash\n[[ "$*" == -s ]] && echo Linux\n' > "$work/bin/uname"
+chmod +x "$work/bin/uname"
+
+# ...except in on_mac, below, which puts this stand-in Mac first on the PATH.
+mkdir -p "$work/macos"
+cat > "$work/macos/vm_stat" <<EOF
+#!/usr/bin/env bash
+cat "$work/vm_stat.txt"
+EOF
+cat > "$work/macos/sysctl" <<EOF
+#!/usr/bin/env bash
+[[ "\$*" == "-n hw.memsize" ]] && cat "$work/memsize"
+EOF
+printf '#!/usr/bin/env bash\n[[ "$*" == -s ]] && echo Darwin\n' > "$work/macos/uname"
+chmod +x "$work/macos/vm_stat" "$work/macos/sysctl" "$work/macos/uname"
 
 export PATH="$work/bin:$PATH"
+
+# Nothing below may reach a real mailer, so stop here unless the fakes are the
+# ones the script will find and they can be run. With a temp directory mounted
+# noexec, say, every test email would go to the machine's own sendmail instead.
+for fake in sendmail msmtp uname; do
+    [[ "$(command -v "$fake")" == "$work/bin/$fake" ]] && continue
+    echo "the fake $fake in $work/bin is not the one on the PATH; refusing to go on" >&2
+    exit 1
+done
+if ! "$work/bin/uname" -s > /dev/null; then
+    echo "cannot run the fakes in $work/bin; refusing to go on" >&2
+    exit 1
+fi
+
 export RAM_ALTMAN_TO=to@example.com RAM_ALTMAN_FROM=from@example.com
 export RAM_ALTMAN_STATE_DIR="$work/state" RAM_ALTMAN_MEMINFO="$work/meminfo"
 
@@ -36,6 +72,30 @@ SwapCached:     999999 kB
 SReclaimable:   $6 kB
 Shmem:          $7 kB
 EOF
+}
+mac_mem() { # total_bytes page_bytes free purgeable file_backed
+    echo "$1" > "$work/memsize"
+    # Every other line is a bystander that must not end up in the sums. The
+    # last one is a look-alike that vm_stat prints on the newest Macs.
+    cat > "$work/vm_stat.txt" <<EOF
+Mach Virtual Memory Statistics: (page size of $2 bytes)
+Pages free:                               $3.
+Pages active:                            400000.
+Pages inactive:                          355000.
+Pages speculative:                        10000.
+Pages throttled:                              0.
+Pages wired down:                        150000.
+Pages purgeable:                          $4.
+Pages purged:                           9999999.
+File-backed pages:                       $5.
+Anonymous pages:                         515000.
+Pages stored in compressor:              300000.
+Pages occupied by compressor:            123576.
+Pages tag-storage free:                   43620.
+EOF
+}
+on_mac() { # runs the script where there is no meminfo, only vm_stat and sysctl
+    PATH="$work/macos:$PATH" RAM_ALTMAN_MEMINFO="$work/no-meminfo" "$script" "$@"
 }
 
 # Mostly page cache: little is free, but plenty is available.
@@ -63,6 +123,7 @@ touch "$work/fail"
 check "failed send not recorded" "$(cat "$work/state/last_sent")" 2000-01-01
 rm "$work/fail"
 "$script"; check "retry succeeds" "$(sent)" 3
+check "sendmail is tried before msmtp" "$(cat "$work/mailer")" "sendmail -t -i"
 
 # Old kernel with no MemAvailable: free + buffers + cached + slab - shmem.
 # SwapCached in the fixture must not be picked up as Cached.
@@ -70,14 +131,63 @@ mem 16000000 1000000 "" 200000 3000000 500000 700000
 out=$("$script" --status)
 check "fallback estimate" "$(awk '/^Available:/ {print $2, $3}' <<<"$out")" "3.8 GiB"
 
+# macOS has no /proc/meminfo: the figures come from vm_stat and sysctl instead.
+# A 16 GiB Apple Silicon Mac, which counts its memory in 16 KiB pages.
+mac_mem 17179869184 16384 10000 15000 250000
+out=$(on_mac --status)
+check "macOS: available = free + file-backed + purgeable" \
+    "$(awk '/^Available:/ {print $2, $3, $4}' <<<"$out")" "4.2 GiB (26.2%)"
+check "macOS: purgeable counts as cache, speculative not as free" \
+    "$(awk '/Free:/ {free = $2} /Cache:/ {cache = $2} END {print free, cache}' <<<"$out")" "0.2 4.0"
+# The awk on macOS follows the locale, and a decimal comma would split the CSV.
+check "macOS: figures keep their full stop in a comma locale" \
+    "$(LC_ALL=de_DE.UTF-8 on_mac --status | awk '/^Available:/ {print $2, $3, $4}')" "4.2 GiB (26.2%)"
+
+# The same memory in 4 KiB pages, as on an Intel Mac, gives the same figures.
+mac_mem 17179869184 4096 40000 60000 1000000
+check "macOS: page size is read, not assumed" \
+    "$(on_mac --status | awk '/^Available:/ {print $2, $3, $4}')" "4.2 GiB (26.2%)"
+
+echo 2000-01-01 > "$work/state/last_sent"
+on_mac; check "macOS: email sent" "$(sent)" 4
+check "macOS: used = total - available" \
+    "$(tail -n 1 "$work/state/usage.csv" | cut -d, -f2-4)" "16777216,12377216,4400000"
+# Every Mac has a sendmail, set up or not, so an msmtp is preferred there.
+check "macOS: msmtp is tried before sendmail" "$(cat "$work/mailer")" "msmtp -t"
+
+# A failed msmtp send is retried too, and is not handed on to the Mac's sendmail,
+# which would say it had worked.
+printf '#!/usr/bin/env bash\nexit 78\n' > "$work/bin/msmtp"
+echo 2000-01-01 > "$work/state/last_sent"
+on_mac 2>/dev/null; check "macOS: failed msmtp send exits non-zero" "$?" 1
+check "macOS: failed msmtp send not recorded" "$(cat "$work/state/last_sent")" 2000-01-01
+check "macOS: failed msmtp send not passed to sendmail" "$(sent)" 4
+cp "$work/bin/sendmail" "$work/bin/msmtp"
+
+# Before macOS 15 the free count could wrap round to four billion pages just as
+# free memory ran out. Believing it would report a full Mac as an empty one.
+mac_mem 17179869184 16384 4294967196 15000 250000
+check "macOS: a wrapped free count is read as none free" \
+    "$(on_mac --status | awk '/^Available:/ {print $2, $3, $4}')" "4.0 GiB (25.3%)"
+
+# A vm_stat without the page counts, or without a page size, is refused rather
+# than guessed at.
+echo "Mach Virtual Memory Statistics: (page size of 4096 bytes)" > "$work/vm_stat.txt"
+on_mac --status 2>/dev/null; check "macOS: vm_stat without page counts refused" "$?" 1
+mac_mem 17179869184 unknown 40000 60000 1000000
+on_mac --status 2>/dev/null; check "macOS: vm_stat without a page size refused" "$?" 1
+# Leave a working Mac behind, so a check added below cannot pass by dying early.
+mac_mem 17179869184 16384 10000 15000 250000
+
 # Variety: 10 bodies should all appear across 10 days, with no back-to-back repeat.
 rm -f "$work/outbox" "$work/state"/bag_*
 mem 16000000 300000 9000000 200000 8000000 500000 100000
 for _ in $(seq 40); do echo 2000-01-01 > "$work/state/last_sent"; "$script"; done
 awk 'BEGIN{RS="=====END=====\n"} NF{n=split($0,l,"\n"); for(i=1;i<=n;i++) if(l[i]=="Hi Sam,"){b=l[i+2]; print b}}' \
     "$work/outbox" > "$work/bodies"
-check "all opening lines used" "$(head -n 10 "$work/bodies" | sort -u | wc -l)" 10
-check "no back-to-back repeat" "$(uniq -d "$work/bodies" | wc -l)" 0
+# BSD wc pads its count with spaces, so $(( )) turns it back into a bare number.
+check "all opening lines used" "$(( $(head -n 10 "$work/bodies" | sort -u | wc -l) ))" 10
+check "no back-to-back repeat" "$(( $(uniq -d "$work/bodies" | wc -l) ))" 0
 
 # Config errors.
 RAM_ALTMAN_TO='' "$script" 2>/dev/null; check "missing recipient refused" "$?" 1

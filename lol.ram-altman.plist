@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    The macOS stand-in for the crontab entry: runs ram-altman.sh every five
+    minutes for the logged-in user. Copy this file to ~/Library/LaunchAgents/
+    (make the folder if it is not there), fill in the script path and the
+    addresses in the copy, then load it with:
+
+        launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/lol.ram-altman.plist
+
+    To stop it, unload it and delete the copy, or it is back at the next login:
+
+        launchctl bootout gui/$(id -u)/lol.ram-altman
+        rm ~/Library/LaunchAgents/lol.ram-altman.plist
+
+    launchd reads the copy once, when it is loaded. After a later change,
+    unload it and load it again. This is XML, so an & in a name has to be
+    written &amp;.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>lol.ram-altman</string>
+
+    <!-- launchd expands neither ~ nor $HOME, so this has to be a full path. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/path/to/ram-altman.sh</string>
+    </array>
+
+    <!-- The script finds an msmtp that Homebrew or MacPorts installed. If yours
+         is somewhere else, add a PATH entry here: its folder, followed by
+         :/usr/bin:/bin:/usr/sbin:/sbin so everything else is still found. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>RAM_ALTMAN_TO</key>
+        <string>recipient@example.com</string>
+        <key>RAM_ALTMAN_FROM</key>
+        <string>you@example.com</string>
+        <key>RAM_ALTMAN_FROM_NAME</key>
+        <string>Your Name</string>
+    </dict>
+
+    <!-- Every five minutes while you are logged in and the Mac is awake.
+         launchd never starts a second copy while one is still running. -->
+    <key>StartInterval</key>
+    <integer>300</integer>
+
+    <!-- cron would have mailed you any errors. launchd puts them here instead.
+         If someone else on this Mac runs this too, give each copy its own name. -->
+    <key>StandardErrorPath</key>
+    <string>/tmp/ram-altman.err</string>
+</dict>
+</plist>
