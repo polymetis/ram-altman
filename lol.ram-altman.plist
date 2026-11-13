@@ -2,14 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
     The macOS stand-in for the crontab entry: runs ram-altman.sh every five
-    minutes for the logged-in user. Fill in the script path and the addresses,
-    copy this file to ~/Library/LaunchAgents/, then load it with:
+    minutes for the logged-in user. Copy this file to ~/Library/LaunchAgents/
+    (make the folder if it is not there), fill in the script path and the
+    addresses in the copy, then load it with:
 
         launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/lol.ram-altman.plist
 
-    and stop it again with:
+    To stop it, unload it and delete the copy, or it is back at the next login:
 
         launchctl bootout gui/$(id -u)/lol.ram-altman
+        rm ~/Library/LaunchAgents/lol.ram-altman.plist
+
+    This is XML, so an & in a name has to be written &amp;.
 -->
 <plist version="1.0">
 <dict>
@@ -33,11 +37,10 @@
         <string>Your Name</string>
     </dict>
 
-    <!-- Every five minutes. launchd never starts a second copy while one is running. -->
+    <!-- Every five minutes while you are logged in and the Mac is awake.
+         launchd never starts a second copy while one is still running. -->
     <key>StartInterval</key>
     <integer>300</integer>
-    <key>RunAtLoad</key>
-    <true/>
 
     <!-- cron would have mailed you any errors. launchd puts them here instead. -->
     <key>StandardErrorPath</key>
