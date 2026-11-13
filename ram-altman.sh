@@ -54,7 +54,10 @@ LOG_LINES_TO_KEEP=50000
 export PATH="$PATH:/usr/sbin:/sbin"
 
 # On a Mac those hold sysctl as well. msmtp is somewhere else again, where
-# neither cron nor launchd looks: wherever Homebrew or MacPorts put it.
+# neither cron nor launchd looks: wherever a package manager put it. The
+# README and lol.ram-altman.plist name the same two.
+#   homebrew: /opt/homebrew/bin on Apple silicon, /usr/local/bin on Intel
+#   macports: /opt/local/bin
 if [[ "$(uname -s)" == Darwin ]]; then
     PATH="$PATH:/opt/homebrew/bin:/usr/local/bin:/opt/local/bin"
 fi
