@@ -122,6 +122,9 @@ check "macOS: available = free + file-backed + purgeable" \
     "$(awk '/^Available:/ {print $2, $3, $4}' <<<"$out")" "4.2 GiB (26.2%)"
 check "macOS: purgeable counts as cache, speculative not as free" \
     "$(awk '/Free:/ {free = $2} /Cache:/ {cache = $2} END {print free, cache}' <<<"$out")" "0.2 4.0"
+# The awk on macOS follows the locale, and a decimal comma would split the CSV.
+check "macOS: figures keep their full stop in a comma locale" \
+    "$(LC_ALL=de_DE.UTF-8 on_mac --status | awk '/^Available:/ {print $2, $3, $4}')" "4.2 GiB (26.2%)"
 
 # The same memory in 4 KiB pages, as on an Intel Mac, gives the same figures.
 mac_mem 17179869184 4096 40000 60000 1000000

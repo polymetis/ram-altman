@@ -52,6 +52,10 @@ LOG_LINES_TO_KEEP=50000
 # directories sendmail lives in, and on a Mac the ones Homebrew puts msmtp in.
 export PATH="$PATH:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
 
+# Figures are written with a full stop whatever the locale says. The awk on
+# macOS would otherwise follow it, and a decimal comma adds a column to the CSV.
+export LC_ALL=C
+
 die() {
     printf 'ram-altman: %s\n' "$*" >&2
     exit 1
