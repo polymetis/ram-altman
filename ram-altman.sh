@@ -48,9 +48,14 @@ LAST_SENT_FILE="$STATE_DIR/last_sent"
 MAX_LOG_BYTES=$((10 * 1024 * 1024))   # Trim the log once it passes 10 MiB
 LOG_LINES_TO_KEEP=50000
 
-# cron and launchd start jobs with a short PATH. It often leaves out the
-# directories sendmail lives in, and on a Mac the ones Homebrew puts msmtp in.
-export PATH="$PATH:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
+# cron's PATH often leaves out the directories sendmail lives in.
+export PATH="$PATH:/usr/sbin:/sbin"
+
+# On a Mac those hold sysctl as well. msmtp is somewhere else again, where
+# neither cron nor launchd looks: wherever Homebrew or MacPorts put it.
+if [[ "$(uname -s)" == Darwin ]]; then
+    PATH="$PATH:/opt/homebrew/bin:/usr/local/bin:/opt/local/bin"
+fi
 
 # Figures are written with a full stop whatever the locale says. The awk on
 # macOS would otherwise follow it, and a decimal comma adds a column to the CSV.
