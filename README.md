@@ -31,7 +31,7 @@ So we wrote a script. If your machine has more than 10% of its RAM available, it
 - Sends at most one email per day, because we're hoarders, not animals
 - Rotates 8 subject lines, 10 messages and 6 sign-offs, so the joke gets old at a carefully managed pace
 - Logs every sample to CSV for when the auditors arrive
-- Ships with 24 tests, more than the DRAM market has had sensible outcomes
+- Ships with 27 tests, more than the DRAM market has had sensible outcomes
 - Is written in bash, as an Electron version would have solved the problem by using all the RAM
 
 ## A sample of today's correspondence

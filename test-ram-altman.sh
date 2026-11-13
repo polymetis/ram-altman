@@ -10,17 +10,18 @@ mkdir -p "$work/bin" "$work/state"
 cat > "$work/bin/sendmail" <<EOF
 #!/usr/bin/env bash
 [[ -e "$work/fail" ]] && exit 75
-basename "\$0" > "$work/mailer"
+echo "\$(basename "\$0") \$*" > "$work/mailer"
 cat >> "$work/outbox"
 echo "=====END=====" >> "$work/outbox"
 EOF
 chmod +x "$work/bin/sendmail"
 # The same fake answers to msmtp, so that whichever mailer the script reaches
-# for, it never finds a real one. $work/mailer says which name it was called by.
+# for, it never finds a real one. $work/mailer says which name it was called
+# by, and with what.
 cp "$work/bin/sendmail" "$work/bin/msmtp"
 
 # The machine under test is a Linux one, wherever the tests are really run...
-printf '#!/usr/bin/env bash\necho Linux\n' > "$work/bin/uname"
+printf '#!/usr/bin/env bash\n[[ "$*" == -s ]] && echo Linux\n' > "$work/bin/uname"
 chmod +x "$work/bin/uname"
 
 # ...except in on_mac, below, which puts this stand-in Mac first on the PATH.
@@ -33,7 +34,7 @@ cat > "$work/macos/sysctl" <<EOF
 #!/usr/bin/env bash
 [[ "\$*" == "-n hw.memsize" ]] && cat "$work/memsize"
 EOF
-printf '#!/usr/bin/env bash\necho Darwin\n' > "$work/macos/uname"
+printf '#!/usr/bin/env bash\n[[ "$*" == -s ]] && echo Darwin\n' > "$work/macos/uname"
 chmod +x "$work/macos/vm_stat" "$work/macos/sysctl" "$work/macos/uname"
 
 export PATH="$work/bin:$PATH"
@@ -120,7 +121,7 @@ touch "$work/fail"
 check "failed send not recorded" "$(cat "$work/state/last_sent")" 2000-01-01
 rm "$work/fail"
 "$script"; check "retry succeeds" "$(sent)" 3
-check "sendmail is tried before msmtp" "$(cat "$work/mailer")" sendmail
+check "sendmail is tried before msmtp" "$(cat "$work/mailer")" "sendmail -t -i"
 
 # Old kernel with no MemAvailable: free + buffers + cached + slab - shmem.
 # SwapCached in the fixture must not be picked up as Cached.
@@ -150,7 +151,16 @@ on_mac; check "macOS: email sent" "$(sent)" 4
 check "macOS: used = total - available" \
     "$(tail -n 1 "$work/state/usage.csv" | cut -d, -f2-4)" "16777216,12377216,4400000"
 # Every Mac has a sendmail, set up or not, so an msmtp is preferred there.
-check "macOS: msmtp is tried before sendmail" "$(cat "$work/mailer")" msmtp
+check "macOS: msmtp is tried before sendmail" "$(cat "$work/mailer")" "msmtp -t"
+
+# A failed msmtp send is retried too, and is not handed on to the Mac's sendmail,
+# which would say it had worked.
+printf '#!/usr/bin/env bash\nexit 78\n' > "$work/bin/msmtp"
+echo 2000-01-01 > "$work/state/last_sent"
+on_mac 2>/dev/null; check "macOS: failed msmtp send exits non-zero" "$?" 1
+check "macOS: failed msmtp send not recorded" "$(cat "$work/state/last_sent")" 2000-01-01
+check "macOS: failed msmtp send not passed to sendmail" "$(sent)" 4
+cp "$work/bin/sendmail" "$work/bin/msmtp"
 
 # Before macOS 15 the free count could wrap round to four billion pages just as
 # free memory ran out. Believing it would report a full Mac as an empty one.
