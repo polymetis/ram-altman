@@ -19,6 +19,15 @@
 #   and slab memory that can be reclaimed, so cached RAM does not count as used.
 #   It leaves out what can't really be reclaimed, such as tmpfs/shared memory,
 #   which makes it more accurate than simply adding "free" and "cached" together.
+#
+# macOS has no /proc/meminfo, so there the same sum is built from vm_stat:
+#   used = hw.memsize - (free + file-backed + purgeable pages)
+#
+#   File-backed pages are the page cache, and purgeable pages are memory that
+#   apps have already said can be thrown away. Like free pages, both can be
+#   handed to new programs without compressing or swapping anything. Together
+#   those two are what Activity Monitor calls Cached Files, and what is left
+#   over is what it lists as App Memory, Wired Memory and Compressed.
 
 set -euo pipefail
 
@@ -44,10 +53,8 @@ die() {
     exit 1
 }
 
-# Sets: total_kb, available_kb, used_kb, free_kb, cache_kb, available_pct
-read_memory() {
-    [[ -r "$MEMINFO" ]] || die "cannot read $MEMINFO (this script needs Linux)"
-
+# Linux. Sets: total_kb, available_kb, free_kb, cache_kb
+read_meminfo() {
     read -r total_kb available_kb free_kb cache_kb < <(
         awk '
             /^MemTotal:/      { total = $2 }
@@ -69,6 +76,46 @@ read_memory() {
     )
 
     (( total_kb > 0 )) || die "could not find MemTotal in $MEMINFO"
+}
+
+# macOS. Sets: total_kb, available_kb, free_kb, cache_kb
+read_vm_stat() {
+    local total_bytes
+    total_bytes=$(sysctl -n hw.memsize 2> /dev/null || true)
+
+    # vm_stat counts pages and prints each count with a trailing full stop,
+    # which awk drops when it reads the field as a number.
+    read -r total_kb available_kb free_kb cache_kb < <(
+        vm_stat | awk -v total_bytes="$total_bytes" '
+            /page size of [0-9]+ bytes/  { page_kb = $(NF - 1) / 1024 }
+            /^Pages free:/               { free = $NF }
+            /^Pages purgeable:/          { purgeable = $NF }
+            /^File-backed pages:/        { file_backed = $NF; has_file_backed = 1 }
+            END {
+                # OS X before 10.9 does not report file-backed pages at all.
+                if (!page_kb || !has_file_backed) exit 1
+                total = total_bytes / 1024
+                free_kb = free * page_kb
+                cache_kb = (file_backed + purgeable) * page_kb
+                available = free_kb + cache_kb
+                if (available > total) available = total
+                printf "%.0f %.0f %.0f %.0f\n", total, available, free_kb, cache_kb
+            }
+        '
+    ) || die "could not find the page counts in vm_stat (needs macOS 10.9 or later)"
+
+    (( total_kb > 0 )) || die "could not read hw.memsize from sysctl"
+}
+
+# Sets: total_kb, available_kb, used_kb, free_kb, cache_kb, available_pct
+read_memory() {
+    if [[ -r "$MEMINFO" ]]; then
+        read_meminfo
+    elif command -v vm_stat > /dev/null; then
+        read_vm_stat
+    else
+        die "cannot read $MEMINFO or run vm_stat (this script needs Linux or macOS)"
+    fi
 
     used_kb=$(( total_kb - available_kb ))
     available_pct=$(awk -v a="$available_kb" -v t="$total_kb" \

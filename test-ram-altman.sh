@@ -15,6 +15,18 @@ echo "=====END=====" >> "$work/outbox"
 EOF
 chmod +x "$work/bin/sendmail"
 
+# A stand-in Mac. These two are only on the PATH for on_mac, below.
+mkdir -p "$work/macos"
+cat > "$work/macos/vm_stat" <<EOF
+#!/usr/bin/env bash
+cat "$work/vm_stat.txt"
+EOF
+cat > "$work/macos/sysctl" <<EOF
+#!/usr/bin/env bash
+[[ "\$*" == "-n hw.memsize" ]] && cat "$work/memsize"
+EOF
+chmod +x "$work/macos/vm_stat" "$work/macos/sysctl"
+
 export PATH="$work/bin:$PATH"
 export RAM_ALTMAN_TO=to@example.com RAM_ALTMAN_FROM=from@example.com
 export RAM_ALTMAN_STATE_DIR="$work/state" RAM_ALTMAN_MEMINFO="$work/meminfo"
@@ -36,6 +48,28 @@ SwapCached:     999999 kB
 SReclaimable:   $6 kB
 Shmem:          $7 kB
 EOF
+}
+mac_mem() { # total_bytes page_bytes free purgeable file_backed
+    echo "$1" > "$work/memsize"
+    # Every other line is a bystander that must not end up in the sums.
+    cat > "$work/vm_stat.txt" <<EOF
+Mach Virtual Memory Statistics: (page size of $2 bytes)
+Pages free:                               $3.
+Pages active:                            400000.
+Pages inactive:                          355000.
+Pages speculative:                        10000.
+Pages throttled:                              0.
+Pages wired down:                        150000.
+Pages purgeable:                          $4.
+Pages purged:                           9999999.
+File-backed pages:                       $5.
+Anonymous pages:                         515000.
+Pages stored in compressor:              300000.
+Pages occupied by compressor:            123576.
+EOF
+}
+on_mac() { # runs the script where there is no meminfo, only vm_stat and sysctl
+    PATH="$work/macos:$PATH" RAM_ALTMAN_MEMINFO="$work/no-meminfo" "$script" "$@"
 }
 
 # Mostly page cache: little is free, but plenty is available.
@@ -69,6 +103,29 @@ rm "$work/fail"
 mem 16000000 1000000 "" 200000 3000000 500000 700000
 out=$("$script" --status)
 check "fallback estimate" "$(awk '/^Available:/ {print $2, $3}' <<<"$out")" "3.8 GiB"
+
+# macOS has no /proc/meminfo: the figures come from vm_stat and sysctl instead.
+# A 16 GiB Apple Silicon Mac, which counts its memory in 16 KiB pages.
+mac_mem 17179869184 16384 10000 15000 250000
+out=$(on_mac --status)
+check "macOS: available = free + file-backed + purgeable" \
+    "$(awk '/^Available:/ {print $2, $3, $4}' <<<"$out")" "4.2 GiB (26.2%)"
+check "macOS: purgeable counts as cache, speculative not as free" \
+    "$(awk '/Free:/ {free = $2} /Cache:/ {cache = $2} END {print free, cache}' <<<"$out")" "0.2 4.0"
+
+# The same memory in 4 KiB pages, as on an Intel Mac, gives the same figures.
+mac_mem 17179869184 4096 40000 60000 1000000
+check "macOS: page size is read, not assumed" \
+    "$(on_mac --status | awk '/^Available:/ {print $2, $3, $4}')" "4.2 GiB (26.2%)"
+
+echo 2000-01-01 > "$work/state/last_sent"
+on_mac; check "macOS: email sent" "$(sent)" 4
+check "macOS: used = total - available" \
+    "$(tail -n 1 "$work/state/usage.csv" | cut -d, -f2-4)" "16777216,12377216,4400000"
+
+# A vm_stat without the page counts is refused, not guessed at.
+echo "Mach Virtual Memory Statistics: (page size of 4096 bytes)" > "$work/vm_stat.txt"
+on_mac --status 2>/dev/null; check "macOS: vm_stat without page counts refused" "$?" 1
 
 # Variety: 10 bodies should all appear across 10 days, with no back-to-back repeat.
 rm -f "$work/outbox" "$work/state"/bag_*

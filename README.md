@@ -31,7 +31,7 @@ So we wrote a script. If your machine has more than 10% of its RAM available, it
 - Sends at most one email per day, because we're hoarders, not animals
 - Rotates 8 subject lines, 10 messages and 6 sign-offs, so the joke gets old at a carefully managed pace
 - Logs every sample to CSV for when the auditors arrive
-- Ships with 14 tests, more than the DRAM market has had sensible outcomes
+- Ships with 20 tests, more than the DRAM market has had sensible outcomes
 - Is written in bash, as an Electron version would have solved the problem by using all the RAM
 
 ## A sample of today's correspondence
@@ -69,9 +69,25 @@ Strictly speaking, the page cache is doing useful work, so counting it as availa
 
 On kernels older than 3.14, which have no `MemAvailable`, the script estimates it from free memory plus reclaimable cache. If you're on one of those, your RAM may be safe. Nobody's coming for that.
 
+### On a Mac
+
+macOS has no `/proc/meminfo` and no `MemAvailable`, so the script puts the same figure together from `vm_stat` and `sysctl hw.memsize`:
+
+```text
+used = total - (free + file-backed + purgeable)
+```
+
+File-backed pages are the page cache. Purgeable pages are memory that apps have already told macOS it may throw away. Like free pages, both can go to a new program without anything being compressed or swapped, which is the test `MemAvailable` applies on Linux.
+
+If you check it against Activity Monitor, Cache is its Cached Files, and Used is its App Memory, Wired Memory and Compressed added together. On macOS 15 its own Memory Used reads higher than that, because it counts purgeable memory as used after already counting it as cached.
+
+`memory_pressure` will tell you a much bigger share of your memory is free. It counts everything macOS could push into the compressor or out to swap, including the apps you have open. That isn't idle RAM, it's a plan for your RAM, and we'd rather not give anyone ideas.
+
+It needs OS X 10.9 or later, which is when `vm_stat` started counting file-backed pages.
+
 ## Installation
 
-You'll need Linux, bash, and a working `sendmail`, `msmtp` or `mail` command. Your RAM is assumed.
+You'll need Linux or macOS, bash, and a working `sendmail`, `msmtp` or `mail` command. Your RAM is assumed.
 
 ```bash
 git clone https://github.com/IainKay/ram-altman.git
@@ -144,7 +160,7 @@ No.
 The memory accounting is. The correspondence isn't.
 
 **Does it work on macOS?**
-No, it reads `/proc/meminfo`. On the other hand, your RAM is probably soldered down, which makes you the hardest target in the global allocation programme.
+Yes. A Mac has no `/proc/meminfo`, so it reads `vm_stat` instead. Your RAM is probably soldered down, which still makes you the hardest target in the global allocation programme.
 
 **Why is the threshold 10%?**
 Below that, your machine has suffered enough.
