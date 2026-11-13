@@ -128,6 +128,27 @@ It samples every five minutes and emails at most once a day. If a send fails, it
 | `RAM_ALTMAN_THRESHOLD` | Email when available RAM is above this percentage (whole number) | `10` |
 | `RAM_ALTMAN_STATE_DIR` | Where the log and state files live | `~/.local/state/ram-altman` |
 
+### Running it on a Mac
+
+A Mac would rather you used launchd than cron, so there's a job for it in [`lol.ram-altman.plist`](lol.ram-altman.plist):
+
+```bash
+cp lol.ram-altman.plist ~/Library/LaunchAgents/
+# edit the copy: the full path to ram-altman.sh, and your addresses
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/lol.ram-altman.plist
+```
+
+It runs every five minutes while you're logged in, same as the crontab line, and anything the script complains about goes to `/tmp/ram-altman.err`. To call it off:
+
+```bash
+launchctl bootout gui/$(id -u)/lol.ram-altman
+```
+
+Two things are different from Linux:
+
+- **Keep the script out of Desktop, Documents and Downloads.** macOS guards those folders, and a background job reaching into them can be refused with "Operation not permitted".
+- **Every Mac has a `sendmail`, and it tells you what you want to hear.** It reports success as soon as a message is queued, then tries to deliver it straight from your Mac, which most networks and mail servers won't accept. The script can't see that, so it counts the day as done. Install `msmtp` instead (`brew install msmtp`) and give it a default account in `~/.msmtprc`: on a Mac the script uses it ahead of `sendmail`, and a send that fails gets retried. Whichever you use, point it at your own address first and see whether anything arrives.
+
 ## Audit yourself
 
 Let it run for a while, then find out how your machine compares:
